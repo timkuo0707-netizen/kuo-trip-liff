@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>郭家橫濱旅行</title>
+<style>
+  body { margin: 0; font-family: -apple-system, "PingFang TC", "Noto Sans TC", sans-serif;
+         background: #fff; color: #222; display: flex; align-items: center;
+         justify-content: center; min-height: 100vh; text-align: center; }
+  .box { padding: 24px; max-width: 360px; }
+  .big { font-size: 48px; margin-bottom: 8px; }
+  .msg { font-size: 22px; font-weight: bold; line-height: 1.5; }
+  .sub { font-size: 16px; color: #555; margin-top: 8px; line-height: 1.6; }
+  .close { display: none; margin-top: 20px; padding: 12px 40px; font-size: 17px;
+           border: 0; border-radius: 24px; background: #06C755; color: #fff; }
+</style>
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+</head>
+<body>
+<div class="box">
+  <div class="big" id="icon">⏳</div>
+  <div class="msg" id="msg">記錄中…</div>
+  <div class="sub" id="sub"></div>
+  <button class="close" id="close" onclick="closeNow()">關閉</button>
+</div>
+<script>
+  var LIFF_ID = '2012006058-7PtzvmoU';
+  var GAS_URL = 'https://script.google.com/macros/s/AKfycbxCC0bP7rgvW30jCKbcwn3BalgMmH0l2kzSWRkhupEkps1PsNigNWnGVuIjWTAuIZI/exec';
+  var finished = false;
+
+  function show(icon, msg, sub) {
+    document.getElementById('icon').textContent = icon;
+    document.getElementById('msg').textContent = msg;
+    document.getElementById('sub').textContent = sub || '';
+    document.getElementById('close').style.display = 'inline-block';
+  }
+
+  function closeNow() {
+    try { liff.closeWindow(); } catch (e) {}
+  }
+
+  function fail(detail) {
+    if (finished) return;
+    finished = true;
+    show('😅', '沒記到，請關閉後再按一次', detail || '');
+  }
+
+  function getChoice() {
+    var q = new URLSearchParams(location.search);
+    if (q.get('d')) return q.get('d');
+    var state = q.get('liff.state');
+    if (state) {
+      var inner = new URLSearchParams(state.charAt(0) === '?' ? state.substring(1) : state);
+      return inner.get('d') || '';
+    }
+    return '';
+  }
+
+  function onSaved(r) {
+    if (finished) return;
+    finished = true;
+    if (!r || !r.ok) {
+      show('😅', '沒記到，請關閉後再按一次', (r && r.error) || '');
+      return;
+    }
+    var sub = '你選了 ' + r.now;
+    if (r.prev && r.prev === r.now) {
+      sub = '你之前就選 ' + r.now + ' 了，不用再按囉';
+    } else if (r.prev) {
+      sub = '你選了 ' + r.now + '（原本選 ' + r.prev + '，已更新）';
+    }
+    show('✅', '記錄完成！可以關閉了', sub);
+    setTimeout(closeNow, 2000);
+  }
+
+  function save() {
+    var choice = getChoice();
+    if (!choice) { fail('沒有收到要記錄的按鈕'); return; }
+    fetch(GAS_URL, {
+      method: 'POST',
+      body: JSON.stringify({ liff: true, idToken: liff.getIDToken(), choice: choice })
+    })
+      .then(function (res) { return res.json(); })
+      .then(onSaved)
+      .catch(function () { fail(''); });
+  }
+
+  setTimeout(function () { fail('等太久了'); }, 8000);
+
+  liff.init({ liffId: LIFF_ID }).then(function () {
+    if (!liff.isLoggedIn()) { liff.login({ redirectUri: location.href }); return; }
+    var q = new URLSearchParams(location.search);
+    if (!q.get('d') && q.get('liff.state')) {
+      // LINE 有時會再轉一次網址，等一下再記錄，避免記兩次
+      setTimeout(function () { if (!finished) save(); }, 1500);
+    } else {
+      save();
+    }
+  }).catch(function (err) {
+    fail(String((err && err.message) || err));
+  });
+</script>
+</body>
+</html>
