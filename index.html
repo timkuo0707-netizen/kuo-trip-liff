@@ -6,30 +6,76 @@
 <title>郭家橫濱旅行</title>
 <style>
   body { margin: 0; font-family: -apple-system, "PingFang TC", "Noto Sans TC", sans-serif;
-         background: #fff; color: #222; display: flex; align-items: center;
-         justify-content: center; min-height: 100vh; text-align: center; }
+         background: #fff; color: #222; }
+  .center { display: flex; align-items: center; justify-content: center; min-height: 100vh; text-align: center; }
   .box { padding: 24px; max-width: 360px; }
   .big { font-size: 48px; margin-bottom: 8px; }
   .msg { font-size: 22px; font-weight: bold; line-height: 1.5; }
   .sub { font-size: 16px; color: #555; margin-top: 8px; line-height: 1.6; }
   .close { display: none; margin-top: 20px; padding: 12px 40px; font-size: 17px;
            border: 0; border-radius: 24px; background: #06C755; color: #fff; }
+  /* 待按清單 */
+  #list { display: none; padding: 16px 16px 32px; max-width: 480px; margin: 0 auto; }
+  #list h1 { font-size: 20px; margin: 4px 0 4px; }
+  #list .hint { font-size: 14px; color: #666; margin: 0 0 16px; line-height: 1.5; }
+  .sec { font-size: 13px; font-weight: bold; color: #06C755; margin: 18px 0 8px; }
+  .item { border: 1px solid #e5e5e5; border-radius: 12px; padding: 12px; margin-bottom: 10px;
+          transition: opacity .4s, max-height .4s, margin .4s, padding .4s; overflow: hidden; max-height: 600px; }
+  .item.vote { border-color: #f5c26b; background: #fffaf0; }
+  .item .tag { font-size: 12px; color: #888; }
+  .item .title { font-size: 16px; font-weight: bold; margin: 2px 0 10px; line-height: 1.4; }
+  .btns { display: flex; flex-wrap: wrap; gap: 8px; }
+  .btns button { flex: 1 1 auto; min-width: 64px; padding: 10px 8px; font-size: 15px;
+                 border: 1px solid #ddd; border-radius: 10px; background: #f6f6f6; color: #222; }
+  .item.vote .btns button { flex: 1 1 100%; text-align: left; }
+  .btns button:disabled { opacity: .5; }
+  .done-note { font-size: 15px; color: #06C755; font-weight: bold; }
+  .item.gone { opacity: 0; max-height: 0; margin: 0; padding: 0 12px; border-width: 0; }
+  .bottom { text-align: center; margin-top: 16px; }
+  .bottom .close { display: inline-block; }
 </style>
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 </head>
 <body>
-<div class="box">
-  <div class="big" id="icon">⏳</div>
-  <div class="msg" id="msg">記錄中…</div>
-  <div class="sub" id="sub"></div>
-  <button class="close" id="close" onclick="closeNow()">關閉</button>
+<div class="center" id="single">
+  <div class="box">
+    <div class="big" id="icon">⏳</div>
+    <div class="msg" id="msg">讀取中…</div>
+    <div class="sub" id="sub"></div>
+    <button class="close" id="close" onclick="closeNow()">關閉</button>
+  </div>
+</div>
+<div id="list">
+  <h1 id="listTitle"></h1>
+  <p class="hint">直接在這裡按就好，按完那一則會自己消失 👇</p>
+  <div id="votes"></div>
+  <div id="others"></div>
+  <div class="bottom"><button class="close" onclick="closeNow()">關閉</button></div>
 </div>
 <script>
-  var LIFF_ID = '2012006058-7PtzvmoU';
+  var RECORD_LIFF_ID = '2012006058-7PtzvmoU';
+  var LIST_LIFF_ID = RECORD_LIFF_ID; // 目前清單和單一按鈕共用同一個小視窗
   var GAS_URL = 'https://script.google.com/macros/s/AKfycbxCC0bP7rgvW30jCKbcwn3BalgMmH0l2kzSWRkhupEkps1PsNigNWnGVuIjWTAuIZI/exec';
   var finished = false;
+  var remaining = 0;
+  var myName = '';
+
+  function param(name) {
+    var q = new URLSearchParams(location.search);
+    if (q.get(name)) return q.get(name);
+    var state = q.get('liff.state');
+    if (state) {
+      var i = state.indexOf('?');
+      var inner = new URLSearchParams(i >= 0 ? state.substring(i + 1) : state);
+      return inner.get(name) || '';
+    }
+    return '';
+  }
+  var IS_LIST = param('v') === 'list';
 
   function show(icon, msg, sub) {
+    document.getElementById('single').style.display = 'flex';
+    document.getElementById('list').style.display = 'none';
     document.getElementById('icon').textContent = icon;
     document.getElementById('msg').textContent = msg;
     document.getElementById('sub').textContent = sub || '';
@@ -43,59 +89,136 @@
   function fail(detail) {
     if (finished) return;
     finished = true;
-    show('😅', '沒記到，請關閉後再按一次', detail || '');
+    show('😅', '連不上，請關閉後再按一次', detail || '');
   }
 
-  function getChoice() {
-    var q = new URLSearchParams(location.search);
-    if (q.get('d')) return q.get('d');
-    var state = q.get('liff.state');
-    if (state) {
-      var inner = new URLSearchParams(state.charAt(0) === '?' ? state.substring(1) : state);
-      return inner.get('d') || '';
-    }
-    return '';
+  function post(body) {
+    return fetch(GAS_URL, { method: 'POST', body: JSON.stringify(body) })
+      .then(function (res) { return res.json(); });
   }
 
-  function onSaved(r) {
-    if (finished) return;
-    finished = true;
-    if (!r || !r.ok) {
-      show('😅', '沒記到，請關閉後再按一次', (r && r.error) || '');
-      return;
-    }
-    var sub = '你選了 ' + r.now;
-    if (r.prev && r.prev === r.now) {
-      sub = '你之前就選 ' + r.now + ' 了，不用再按囉';
-    } else if (r.prev) {
-      sub = '你選了 ' + r.now + '（原本選 ' + r.prev + '，已更新）';
-    }
-    show('✅', '記錄完成！可以關閉了', sub);
-    setTimeout(closeNow, 2000);
-  }
-
-  function save() {
-    var choice = getChoice();
+  // ===== 單一按鈕：記錄後自動關 =====
+  function saveOne() {
+    document.getElementById('msg').textContent = '記錄中…';
+    var choice = param('d');
     if (!choice) { fail('沒有收到要記錄的按鈕'); return; }
-    fetch(GAS_URL, {
-      method: 'POST',
-      body: JSON.stringify({ liff: true, idToken: liff.getIDToken(), choice: choice })
-    })
-      .then(function (res) { return res.json(); })
-      .then(onSaved)
+    post({ liff: true, idToken: liff.getIDToken(), choice: choice })
+      .then(function (r) {
+        if (finished) return;
+        finished = true;
+        if (!r || !r.ok) { show('😅', '沒記到，請關閉後再按一次', (r && r.error) || ''); return; }
+        var sub = '你選了 ' + r.now;
+        if (r.prev && r.prev === r.now) sub = '你之前就選 ' + r.now + ' 了，不用再按囉';
+        else if (r.prev) sub = '你選了 ' + r.now + '（原本選 ' + r.prev + '，已更新）';
+        show('✅', '記錄完成！可以關閉了', sub);
+        setTimeout(closeNow, 2000);
+      })
       .catch(function () { fail(''); });
   }
 
-  setTimeout(function () { fail('等太久了'); }, 8000);
+  // ===== 待按清單 =====
+  function updateTitle() {
+    var t = document.getElementById('listTitle');
+    t.textContent = remaining > 0 ? (myName + '，你還有 ' + remaining + ' 則沒按') : '';
+  }
 
-  liff.init({ liffId: LIFF_ID }).then(function () {
+  function allDone() {
+    show('🎉', (myName ? myName + '，' : '') + '你都按完了！', '謝謝你～明天的推播見 👋');
+  }
+
+  function choose(itemEl, prefix, value, label) {
+    var buttons = itemEl.querySelectorAll('button');
+    for (var i = 0; i < buttons.length; i++) buttons[i].disabled = true;
+    post({ liff: true, idToken: liff.getIDToken(), choice: prefix + '|' + value })
+      .then(function (r) {
+        if (!r || !r.ok) {
+          for (var i = 0; i < buttons.length; i++) buttons[i].disabled = false;
+          alertInline(itemEl, '😅 沒記到，請再按一次');
+          return;
+        }
+        itemEl.querySelector('.btns').innerHTML = '<div class="done-note"></div>';
+        itemEl.querySelector('.done-note').textContent = '✅ 已記錄：' + label;
+        setTimeout(function () {
+          itemEl.classList.add('gone');
+          remaining--;
+          updateTitle();
+          if (remaining <= 0) setTimeout(allDone, 400);
+        }, 700);
+      })
+      .catch(function () {
+        for (var i = 0; i < buttons.length; i++) buttons[i].disabled = false;
+        alertInline(itemEl, '😅 連不上，請再按一次');
+      });
+  }
+
+  function alertInline(itemEl, text) {
+    var n = itemEl.querySelector('.err');
+    if (!n) { n = document.createElement('div'); n.className = 'err'; n.style.cssText = 'color:#E5484D;font-size:14px;margin-top:8px'; itemEl.appendChild(n); }
+    n.textContent = text;
+  }
+
+  function renderItem(p) {
+    var el = document.createElement('div');
+    el.className = 'item' + (p.kind === 'vote' ? ' vote' : '');
+    var tag = document.createElement('div');
+    tag.className = 'tag';
+    tag.textContent = (p.tag ? p.tag + '・' : '') + p.date.substring(5).replace('-', '/');
+    var title = document.createElement('div');
+    title.className = 'title';
+    title.textContent = p.title;
+    var btns = document.createElement('div');
+    btns.className = 'btns';
+    (p.options || []).forEach(function (o) {
+      var b = document.createElement('button');
+      b.textContent = o[0];
+      b.onclick = function () { choose(el, p.prefix, o[1], o[0]); };
+      btns.appendChild(b);
+    });
+    el.appendChild(tag); el.appendChild(title); el.appendChild(btns);
+    return el;
+  }
+
+  function loadList() {
+    document.getElementById('msg').textContent = '整理你的待按清單…';
+    post({ liff: true, action: 'pending', idToken: liff.getIDToken() })
+      .then(function (r) {
+        if (finished) return;
+        finished = true;
+        if (!r || !r.ok) { show('😅', '讀不到清單，請關閉後再試一次', (r && r.error) || ''); return; }
+        myName = r.name || '';
+        remaining = r.items.length;
+        if (remaining === 0) { allDone(); return; }
+        var votes = r.items.filter(function (p) { return p.kind === 'vote'; });
+        var others = r.items.filter(function (p) { return p.kind !== 'vote'; });
+        var vBox = document.getElementById('votes'), oBox = document.getElementById('others');
+        if (votes.length) {
+          var h = document.createElement('div'); h.className = 'sec';
+          h.textContent = '🏨 住宿投票（10/31 前要投完）'; vBox.appendChild(h);
+          votes.forEach(function (p) { vBox.appendChild(renderItem(p)); });
+        }
+        if (others.length) {
+          var h2 = document.createElement('div'); h2.className = 'sec';
+          h2.textContent = '😍 喜不喜歡（最近 7 天）'; oBox.appendChild(h2);
+          others.forEach(function (p) { oBox.appendChild(renderItem(p)); });
+        }
+        updateTitle();
+        document.getElementById('single').style.display = 'none';
+        document.getElementById('list').style.display = 'block';
+      })
+      .catch(function () { fail(''); });
+  }
+
+  setTimeout(function () { fail('等太久了'); }, IS_LIST ? 15000 : 8000);
+
+  liff.init({ liffId: IS_LIST ? LIST_LIFF_ID : RECORD_LIFF_ID }).then(function () {
     if (!liff.isLoggedIn()) { liff.login({ redirectUri: location.href }); return; }
+    if (IS_LIST) { loadList(); return; }
     var q = new URLSearchParams(location.search);
     if (!q.get('d') && q.get('liff.state')) {
       // LINE 有時會再轉一次網址，等一下再記錄，避免記兩次
-      setTimeout(function () { if (!finished) save(); }, 1500);
+      setTimeout(function () { if (!finished) saveOne(); }, 1500);
     } else {
-      save();
+      saveOne();
     }
   }).catch(function (err) {
     fail(String((err && err.message) || err));
